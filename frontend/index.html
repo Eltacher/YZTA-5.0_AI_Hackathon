@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="YZTA - KOBİ'ler ve kooperatifler için AI destekli e-ticaret yönetim platformu">
+    <title>YZTA — AI E-Ticaret Platformu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- ─── Sidebar ──────────────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">🚀</div>
+                <div class="logo-text">
+                    <span class="logo-title">YZTA</span>
+                    <span class="logo-subtitle">AI E-Ticaret</span>
+                </div>
+            </div>
+            <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Menüyü Aç/Kapa">☰</button>
+        </div>
+
+        <nav class="sidebar-nav" id="sidebar-nav">
+            <a href="#dashboard" class="nav-item active" data-page="dashboard" id="nav-dashboard">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">Dashboard</span>
+            </a>
+            <a href="#products" class="nav-item" data-page="products" id="nav-products">
+                <span class="nav-icon">🏷️</span>
+                <span class="nav-label">Ürünler</span>
+            </a>
+            <a href="#orders" class="nav-item" data-page="orders" id="nav-orders">
+                <span class="nav-icon">📦</span>
+                <span class="nav-label">Siparişler</span>
+                <span class="nav-badge" id="orders-badge" style="display:none">0</span>
+            </a>
+            <a href="#cargo" class="nav-item" data-page="cargo" id="nav-cargo">
+                <span class="nav-icon">🚚</span>
+                <span class="nav-label">Kargo</span>
+                <span class="nav-badge danger" id="cargo-badge" style="display:none">0</span>
+            </a>
+            <a href="#inventory" class="nav-item" data-page="inventory" id="nav-inventory">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">Stok Yönetimi</span>
+                <span class="nav-badge warning" id="inventory-badge" style="display:none">0</span>
+            </a>
+            <a href="#tasks" class="nav-item" data-page="tasks" id="nav-tasks">
+                <span class="nav-icon">✅</span>
+                <span class="nav-label">Görevler</span>
+            </a>
+            <a href="#analytics" class="nav-item" data-page="analytics" id="nav-analytics">
+                <span class="nav-icon">📈</span>
+                <span class="nav-label">Analitik</span>
+            </a>
+            <a href="#customers" class="nav-item" data-page="customers" id="nav-customers">
+                <span class="nav-icon">👥</span>
+                <span class="nav-label">Müşteriler</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="ai-status">
+                <span class="ai-dot"></span>
+                <span>AI Agent Aktif</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ─── Ana İçerik ───────────────────────────────────────── -->
+    <main class="main-content" id="main-content">
+        <!-- Üst Bar -->
+        <header class="topbar" id="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title" id="page-title">Dashboard</h1>
+                <span class="page-subtitle" id="page-subtitle">Genel bakış ve anlık durum</span>
+            </div>
+            <div class="topbar-right">
+                <div class="search-box" id="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" placeholder="Sipariş, ürün veya müşteri ara..." id="global-search">
+                </div>
+                <button class="notification-btn" id="notification-btn" aria-label="Bildirimler">
+                    🔔
+                    <span class="notification-count" id="notification-count" style="display:none">0</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Bildirim Paneli -->
+        <div class="notification-panel" id="notification-panel" style="display:none">
+            <div class="notification-panel-header">
+                <h3>Bildirimler</h3>
+                <button id="mark-all-read-btn">Tümünü Okundu Yap</button>
+            </div>
+            <div class="notification-list" id="notification-list">
+                <!-- JS ile doldurulacak -->
+            </div>
+        </div>
+
+        <!-- Sayfa İçeriği -->
+        <div class="page-content" id="page-content">
+            <!-- JS tarafından dinamik olarak yüklenecek -->
+            <div class="loading-screen" id="loading-screen">
+                <div class="loader"></div>
+                <p>Yükleniyor...</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- ─── AI Chatbot Butonu ────────────────────────────────── -->
+    <button class="chat-fab" id="chat-fab" aria-label="AI Asistan">
+        <span class="chat-fab-icon">🤖</span>
+        <span class="chat-fab-pulse"></span>
+    </button>
+
+    <!-- ─── AI Chatbot Paneli ────────────────────────────────── -->
+    <div class="chat-panel" id="chat-panel" style="display:none">
+        <div class="chat-header">
+            <div class="chat-header-info">
+                <span class="chat-avatar">🤖</span>
+                <div>
+                    <h3>YZTA AI Asistan</h3>
+                    <span class="chat-status">Çevrimiçi</span>
+                </div>
+            </div>
+            <button class="chat-close" id="chat-close" aria-label="Sohbeti Kapat">✕</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-welcome">
+                <div class="chat-welcome-icon">🤖</div>
+                <h4>Merhaba! Ben YZTA AI Asistan</h4>
+                <p>Sipariş takibi, stok durumu, kargo bilgisi ve daha fazlası hakkında bana soru sorabilirsiniz.</p>
+                <div class="chat-suggestions">
+                    <button class="chat-suggestion" data-text="Günlük özeti göster">📊 Günlük Özet</button>
+                    <button class="chat-suggestion" data-text="Kritik stok uyarıları">⚠️ Stok Uyarıları</button>
+                    <button class="chat-suggestion" data-text="Bekleyen siparişler">📦 Bekleyen Siparişler</button>
+                </div>
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <input type="text" class="chat-input" id="chat-input" placeholder="Mesajınızı yazın...">
+            <button class="chat-send" id="chat-send" aria-label="Gönder">➤</button>
+        </div>
+    </div>
+
+    <!-- ─── Toast Bildirimleri ───────────────────────────────── -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- ─── JavaScript ───────────────────────────────────────── -->
+    <script src="js/api.js"></script>
+    <script src="js/components.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/products.js"></script>
+    <script src="js/orders.js"></script>
+    <script src="js/cargo.js"></script>
+    <script src="js/inventory.js"></script>
+    <script src="js/tasks.js"></script>
+    <script src="js/analytics.js"></script>
+    <script src="js/customers.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
