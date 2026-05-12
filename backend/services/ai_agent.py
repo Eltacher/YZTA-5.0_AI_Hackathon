@@ -1,18 +1,22 @@
 """
-AI Agent Servisi - Mock Implementation.
-Doğal dil sorguları işler, intent tanımlama ve bağlama uygun yanıt üretme.
-Gerçek Gemini API entegrasyonu için bu dosya genişletilecek.
+AI Agent Servisi - Mock + Gemini Dual Mode.
+GEMINI_API_KEY ayarlıysa gerçek Gemini model kullanır,
+yoksa mevcut mock yanıtlarla çalışır.
 """
 
 import json
+import os
 import re
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class AIAgent:
     """
-    Mock AI Agent - KOBİ e-ticaret asistanı.
-    Müşteri sorularını anlayıp ilgili sistemlerle etkileşime geçer.
+    Dual-mode AI Agent - KOBİ e-ticaret asistanı.
+    Mock fallback + Gemini API desteği.
     """
 
     # Intent tanımlama desenleri
@@ -48,8 +52,96 @@ class AIAgent:
         ]
     }
 
+    SYSTEM_PROMPT = """Sen YZTA AI Asistan'sın — KOBİ'ler ve kooperatifler için e-ticaret yönetim platformunun akıllı asistanısın.
+
+Görevlerin:
+- Sipariş takibi ve durumu hakkında bilgi vermek
+- Stok seviyeleri ve uyarıları raporlamak
+- Kargo takibi ve gecikmeleri bildirmek
+- Ürün bilgileri sunmak
+- Günlük iş özetleri oluşturmak
+- Tedarikçi sipariş önerileri yapmak
+
+Kurallar:
+- Türkçe yanıt ver, samimi ama profesyonel ol
+- Emoji kullan ama abartma
+- Verileri listeleyerek ve madde işaretleriyle sun
+- Fiyatları ₺ (Türk Lirası) cinsinden göster
+- Kısa ve öz yanıtlar ver, gereksiz açıklama yapma
+- **Kalın** metin kullanarak önemli verileri vurgula
+- Kullanıcının verdiği bağlam verilerini (context) kullanarak yanıt oluştur
+- Bağlam verisi yoksa, kullanıcıyı yönlendir"""
+
     def __init__(self):
         self.conversation_history = []
+        self._gemini_model = None
+        self._api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self._init_gemini()
+
+    def _init_gemini(self):
+        """Gemini API'yi başlat. Key yoksa veya hata olursa mock'a düş."""
+        if not self._api_key:
+            print("ℹ️  GEMINI_API_KEY ayarlanmamış → Mock mod aktif")
+            return
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self._api_key)
+            self._gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+            # Test çağrısı
+            self._gemini_model.generate_content("test", generation_config={"max_output_tokens": 5})
+            print("✅ Gemini API bağlantısı başarılı → Gerçek AI mod aktif")
+        except Exception as e:
+            print(f"⚠️  Gemini API başlatılamadı: {e} → Mock mod aktif")
+            self._gemini_model = None
+
+    @property
+    def is_gemini_active(self) -> bool:
+        return self._gemini_model is not None
+
+    def set_api_key(self, key: str) -> dict:
+        """API key'i runtime'da ayarla ve test et."""
+        self._api_key = key.strip()
+        if not self._api_key:
+            self._gemini_model = None
+            # .env dosyasını güncelle
+            self._update_env_file("")
+            return {"success": True, "mode": "mock", "message": "API key kaldırıldı, mock mod aktif"}
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self._api_key)
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            # Doğrulama çağrısı
+            model.generate_content("Merhaba", generation_config={"max_output_tokens": 10})
+            self._gemini_model = model
+            # .env dosyasını güncelle
+            self._update_env_file(self._api_key)
+            return {"success": True, "mode": "gemini", "message": "Gemini API aktif!"}
+        except Exception as e:
+            self._gemini_model = None
+            return {"success": False, "mode": "mock", "message": f"API key geçersiz: {str(e)}"}
+
+    def _update_env_file(self, key: str):
+        """Env dosyasını güncelle."""
+        env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        try:
+            lines = []
+            found = False
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY"):
+                            lines.append(f"GEMINI_API_KEY={key}\n")
+                            found = True
+                        else:
+                            lines.append(line)
+            if not found:
+                lines.append(f"GEMINI_API_KEY={key}\n")
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except Exception:
+            pass  # Env yazılamazsa sessizce devam et
 
     def detect_intent(self, message: str) -> tuple:
         """
@@ -80,18 +172,110 @@ class AIAgent:
 
     def generate_response(self, message: str, db_context: dict = None) -> dict:
         """
-        Kullanıcı mesajına bağlama uygun yanıt üret.
-        
-        Args:
-            message: Kullanıcı mesajı
-            db_context: Veritabanından çekilen bağlam verileri
-            
-        Returns:
-            dict: {"response": str, "intent": str, "actions": list, "data": dict}
+        Kullanıcı mesajına yanıt üret.
+        Gemini aktifse gerçek AI, değilse mock yanıt.
         """
         intent, params = self.detect_intent(message)
 
-        # Yanıt üretme
+        # Gemini aktifse: AI ile yanıtla
+        if self.is_gemini_active:
+            return self._gemini_response(message, intent, db_context)
+
+        # Mock mod: mevcut şablon yanıtlar
+        return self._mock_response(message, intent, params, db_context)
+
+    def _gemini_response(self, message: str, intent: str, db_context: dict = None) -> dict:
+        """Gemini API ile yanıt üret."""
+        try:
+            # Bağlam metnini oluştur
+            context_text = self._format_context(intent, db_context)
+
+            prompt = f"""{self.SYSTEM_PROMPT}
+
+--- BAĞLAM VERİLERİ ---
+{context_text}
+
+--- KULLANICI MESAJI ---
+{message}
+
+Yukarıdaki bağlam verilerini kullanarak kullanıcıya yardımcı ol. Markdown formatında yanıt ver."""
+
+            response = self._gemini_model.generate_content(
+                prompt,
+                generation_config={
+                    "max_output_tokens": 1024,
+                    "temperature": 0.7,
+                }
+            )
+
+            return {
+                "response": response.text,
+                "intent": intent,
+                "actions": [f"{intent}_gemini"],
+                "data": db_context
+            }
+        except Exception as e:
+            # Gemini hatası → mock'a düş
+            print(f"⚠️  Gemini yanıt hatası: {e}, mock'a düşülüyor")
+            _, params = self.detect_intent(message)
+            return self._mock_response(message, intent, params, db_context)
+
+    def _format_context(self, intent: str, db_context: dict = None) -> str:
+        """Bağlam verilerini Gemini'ye okunabilir metne dönüştür."""
+        if not db_context:
+            return "Bağlam verisi yok."
+
+        parts = []
+
+        if intent == "order_query" and db_context.get("order"):
+            o = db_context["order"]
+            parts.append(f"Sipariş: #{o.get('order_number')}, Durum: {o.get('status')}, "
+                        f"Müşteri: {o.get('customer_name')}, Tutar: {o.get('total_amount', 0):.2f} ₺, "
+                        f"Tarih: {str(o.get('created_at', ''))[:10]}")
+            if o.get("cargo"):
+                c = o["cargo"]
+                parts.append(f"Kargo: {c.get('tracking_number')}, Durum: {c.get('status')}, "
+                           f"Konum: {c.get('last_location')}")
+
+        elif intent == "stock_check" and db_context.get("products"):
+            parts.append("Ürün Stok Durumları:")
+            for p in db_context["products"]:
+                status = "KRİTİK" if p["stock_quantity"] <= p.get("min_stock_threshold", 10) else "Normal"
+                parts.append(f"  - {p['name']}: {p['stock_quantity']} {p.get('unit', 'adet')} ({status})")
+
+        elif intent == "cargo_track" and db_context.get("cargo"):
+            c = db_context["cargo"]
+            parts.append(f"Kargo: {c.get('tracking_number')}, Firma: {c.get('carrier')}, "
+                        f"Durum: {c.get('status')}, Konum: {c.get('last_location')}, "
+                        f"Tahmini Teslimat: {str(c.get('estimated_delivery', ''))[:10]}")
+            if c.get("is_delayed"):
+                parts.append(f"⚠️ GECİKME: {c.get('delay_reason', 'Sebep bilinmiyor')}")
+
+        elif intent == "product_info" and db_context.get("product"):
+            p = db_context["product"]
+            parts.append(f"Ürün: {p['name']}, Fiyat: {p['price']:.2f} ₺, "
+                        f"Stok: {p['stock_quantity']} {p.get('unit', 'adet')}, "
+                        f"Kategori: {p.get('category')}, Açıklama: {p.get('description')}")
+
+        elif intent == "daily_summary" and db_context.get("summary"):
+            s = db_context["summary"]
+            parts.append(f"Bugünkü Siparişler: {s.get('today_orders', 0)}, "
+                        f"Bugünkü Ciro: {s.get('today_revenue', 0):.2f} ₺, "
+                        f"Bekleyen: {s.get('pending_orders', 0)}, "
+                        f"Düşük Stok: {s.get('low_stock_count', 0)}, "
+                        f"Geciken Kargo: {s.get('delayed_cargo', 0)}")
+
+        elif intent == "inventory_alert" and db_context.get("alerts"):
+            parts.append("Aktif Stok Uyarıları:")
+            for a in db_context["alerts"]:
+                parts.append(f"  - {a.get('product_name')}: {a.get('message')} | Öneri: {a.get('suggested_action', '-')}")
+
+        return "\n".join(parts) if parts else "Bağlam verisi yok."
+
+    # ─── Mock Yanıt Sistemi ──────────────────────────────────────
+
+    def _mock_response(self, message: str, intent: str, params: dict, db_context: dict = None) -> dict:
+        """Mevcut mock şablon yanıtları."""
         if intent == "order_query":
             return self._handle_order_query(params, db_context)
         elif intent == "stock_check":

@@ -26,6 +26,9 @@ const App = {
         document.getElementById('notification-btn').addEventListener('click', () => this.toggleNotifications());
         document.getElementById('mark-all-read-btn').addEventListener('click', () => this.markAllRead());
 
+        // Ayarlar
+        document.getElementById('settings-btn').addEventListener('click', () => this.toggleSettings());
+
         // Sidebar toggle (mobil)
         document.getElementById('sidebar-toggle').addEventListener('click', () => {
             document.getElementById('sidebar').classList.toggle('open');
@@ -38,8 +41,9 @@ const App = {
         const hash = location.hash.replace('#', '') || 'dashboard';
         this.navigate(hash);
 
-        // Bildirimleri yükle
+        // Bildirimleri yükle ve AI durumunu kontrol et
         this.loadNotificationCount();
+        this.checkAIStatus();
         setInterval(() => this.loadNotificationCount(), 30000);
     },
 
@@ -130,6 +134,87 @@ const App = {
         try { await api.post('/notifications/read-all'); } catch(e) {}
         this.loadNotificationCount();
         this.toggleNotifications();
+    },
+
+    // ─── AI Ayarlar Yönetimi ────────────────────────────────
+    async toggleSettings() {
+        const panel = document.getElementById('settings-panel');
+        const isVisible = panel.style.display !== 'none';
+        // Bildirim panelini kapat
+        document.getElementById('notification-panel').style.display = 'none';
+        if (isVisible) {
+            panel.style.display = 'none';
+            return;
+        }
+        panel.style.display = 'block';
+        this.checkAIStatus();
+    },
+
+    async checkAIStatus() {
+        try {
+            const status = await api.get('/ai/status');
+            const dot = document.getElementById('ai-mode-dot');
+            const indicator = document.getElementById('ai-status-indicator');
+            const mode = document.getElementById('ai-status-mode');
+            const desc = document.getElementById('ai-status-desc');
+            const sidebarDot = document.querySelector('.ai-dot');
+            const sidebarText = document.querySelector('.ai-status span:last-child');
+
+            if (status.gemini_active) {
+                dot.classList.add('gemini');
+                indicator.classList.add('gemini');
+                mode.textContent = '🟢 Gemini AI Aktif';
+                desc.textContent = 'Google Gemini modeli ile gerçek AI yanıtlar üretiliyor';
+                if (sidebarDot) sidebarDot.style.background = 'var(--success)';
+                if (sidebarText) sidebarText.textContent = 'Gemini AI Aktif';
+            } else {
+                dot.classList.remove('gemini');
+                indicator.classList.remove('gemini');
+                mode.textContent = '🟡 Mock Mod';
+                desc.textContent = 'Şablon yanıtlar kullanılıyor — API key ekleyerek Gemini\'e geçin';
+                if (sidebarDot) sidebarDot.style.background = 'var(--warning)';
+                if (sidebarText) sidebarText.textContent = 'AI Agent (Mock)';
+            }
+        } catch(e) {
+            console.error('AI status check failed:', e);
+        }
+    },
+
+    async saveApiKey() {
+        const input = document.getElementById('gemini-api-key');
+        const key = input.value.trim();
+        if (!key) {
+            UI.toast('Lütfen API key girin', 'warning');
+            return;
+        }
+        const btn = document.getElementById('save-api-key-btn');
+        btn.textContent = '...';
+        btn.disabled = true;
+        try {
+            const res = await api.post('/ai/set-key', { api_key: key });
+            if (res.success) {
+                UI.toast(res.message, 'success');
+                input.value = '';
+                this.checkAIStatus();
+            } else {
+                UI.toast(res.message, 'error');
+            }
+        } catch(e) {
+            UI.toast('API key kaydedilemedi: ' + e.message, 'error');
+        } finally {
+            btn.textContent = 'Kaydet';
+            btn.disabled = false;
+        }
+    },
+
+    async removeApiKey() {
+        try {
+            const res = await api.post('/ai/remove-key');
+            UI.toast(res.message || 'Mock moda geçildi', 'info');
+            this.checkAIStatus();
+        } catch(e) {
+            UI.toast('İşlem başarısız', 'error');
+        }
     }
 };
 

@@ -6,12 +6,14 @@ KOBİ'ler için AI destekli e-ticaret yönetim sistemi.
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import os
 import json
 
 from database import engine, Base, SessionLocal
 from routers import products, orders, customers, cargo, inventory, tasks, analytics, ai_chat
 from services.notification_service import notification_service
+from services.ai_agent import ai_agent
 
 # ─── Veritabanı tablolarını oluştur ──────────────────────────
 from models import *  # noqa - modelleri import et ki tablolar oluşsun
@@ -127,6 +129,35 @@ def health_check():
         "service": "YZTA E-Ticaret Platformu",
         "version": "1.0.0"
     }
+
+
+# ─── AI Yönetim API ──────────────────────────────────────────
+class ApiKeyRequest(BaseModel):
+    api_key: str
+
+
+@app.get("/api/ai/status")
+def ai_status():
+    """AI mod durumunu döndür."""
+    return {
+        "mode": "gemini" if ai_agent.is_gemini_active else "mock",
+        "gemini_active": ai_agent.is_gemini_active,
+        "message": "Gemini AI aktif" if ai_agent.is_gemini_active else "Mock mod — API key ekleyerek gerçek AI'a geçiş yapabilirsiniz"
+    }
+
+
+@app.post("/api/ai/set-key")
+def set_api_key(data: ApiKeyRequest):
+    """Gemini API key ayarla."""
+    result = ai_agent.set_api_key(data.api_key)
+    return result
+
+
+@app.post("/api/ai/remove-key")
+def remove_api_key():
+    """Gemini API key kaldır, mock moda geç."""
+    result = ai_agent.set_api_key("")
+    return result
 
 
 # ─── Statik dosyalar (Frontend) ─────────────────────────────
