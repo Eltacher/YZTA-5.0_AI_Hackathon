@@ -108,3 +108,28 @@ def chat_history(session_id: str, db: Session = Depends(get_db)):
         ChatMessage.session_id == session_id
     ).order_by(ChatMessage.created_at.asc()).all()
     return [m.to_dict() for m in messages]
+
+
+# ── EK: smart endpoint ──
+@router.post("/smart")
+def chat_smart(data: ChatRequest, db: Session = Depends(get_db)):
+    session_id = data.session_id or str(uuid.uuid4())[:8]
+
+    db.add(ChatMessage(
+        session_id=session_id, role="user", content=data.message
+    ))
+
+    result = ai_agent.smart_response(data.message, db)
+
+    db.add(ChatMessage(
+        session_id=session_id, role="assistant",
+        content=result["response"], intent=result["intent"]
+    ))
+    db.commit()
+
+    return {
+        "session_id": session_id,
+        "response": result["response"],
+        "intent": result["intent"],
+        "actions": result["actions"],
+    }

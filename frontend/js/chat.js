@@ -62,7 +62,7 @@ const ChatModule = {
         this.showTyping();
 
         try {
-            const res = await api.post('/chat/', { message, session_id: this.sessionId });
+            const res = await api.post('/chat/smart', { message, session_id: this.sessionId });
             this.hideTyping();
             this.addMessage(res.response, 'assistant');
         } catch (e) {

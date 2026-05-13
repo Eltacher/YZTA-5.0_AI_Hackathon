@@ -1,0 +1,53 @@
+# Ortam değişkenleri (API keys, secrets)
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Veritabanı
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Yedekler
+*.bak
+*.backup
+*.old
+
+# Lokal test/senaryo scriptleri (kişisel — repo'da yer almaz)
+backend/test_smart.py
+backend/test_smart_api.py
+backend/test_*.py
+
+# Logs
+*.log
+logs/
+
+# Build
+dist/
+build/
+*.egg
+
+# Frontend
+node_modules/

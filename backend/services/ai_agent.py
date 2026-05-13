@@ -496,6 +496,261 @@ Sormak istediğinizi yazmanız yeterli! 🚀""",
             "data": None
         }
 
+    # ── EK: smart intent ──
+    EXTRA_PATTERNS = {
+        "delayed_cargo": [
+            r"geciken\s*kargo", r"gecikm\w*\s*kargo",
+            r"gecikme.*var", r"geç\s*olan\s*kargo",
+        ],
+        "tracking_query": [
+            r"(tr\d{10,})",
+        ],
+        "customer_orders": [
+            r"(.+?)['’]?(?:in|nin|nın|nun|nün)\s+sipariş",
+            r"(.+?)\s+siparişler[iı]",
+            r"müşteri\s+(.+?)\s+sipariş",
+        ],
+        "today_summary_extra": [
+            r"bugünkü\s*özet", r"bugün\s*özet", r"bugünkü\s*durum",
+        ],
+        "stock_check_extra": [
+            r"sto[ğk]u", r"sto[ğk]un\b", r"sto[ğk]ta",
+        ],
+        "filtered_cargo": [
+            r"yolda\s+olan", r"hazırlanan\s+kargo",
+            r"teslim\s+edil(en|miş)",
+        ],
+    }
+
+    def detect_intent_v2(self, message: str) -> tuple:
+        msg = message.lower().strip()
+        for intent, patterns in self.EXTRA_PATTERNS.items():
+            for pattern in patterns:
+                m = re.search(pattern, msg)
+                if m:
+                    params = {}
+                    if intent == "tracking_query":
+                        params["tracking_number"] = m.group(1).upper()
+                    elif intent == "customer_orders":
+                        params["customer_name"] = m.group(1).strip()
+                    return intent, params
+        return self.detect_intent(message)
+
+    # ── EK: smart context builder ──
+    def _get_delayed_unified(self, db):
+        from models import CargoShipment, CargoStatus
+        now = datetime.utcnow()
+        rows = db.query(CargoShipment).filter(
+            (CargoShipment.is_delayed == True)
+            | ((CargoShipment.estimated_delivery < now)
+               & (CargoShipment.status != CargoStatus.DELIVERED))
+        ).all()
+        return [c.to_dict() for c in rows]
+
+    def _find_cargo_by_tracking(self, tracking_no, db):
+        from models import CargoShipment
+        cargo = db.query(CargoShipment).filter(
+            CargoShipment.tracking_number == tracking_no.upper()
+        ).first()
+        return cargo.to_dict() if cargo else None
+
+    def _find_customer_orders(self, name, db):
+        from models import Customer, Order
+        name_lower = name.lower()
+        customer = None
+        for c in db.query(Customer).all():
+            if name_lower in c.name.lower():
+                customer = c
+                break
+        if not customer:
+            return None
+        orders = db.query(Order).filter(
+            Order.customer_id == customer.id
+        ).all()
+        return {
+            "customer_name": customer.name,
+            "orders": [o.to_dict() for o in orders],
+        }
+
+    def _find_product_in_message(self, message, db):
+        from models import Product
+        msg_lower = message.lower()
+        products = db.query(Product).filter(Product.is_active == True).all()
+        for p in products:
+            parts = [w.strip("()").lower() for w in p.name.split()]
+            for part in parts:
+                if len(part) > 2 and part in msg_lower:
+                    return p.to_dict()
+        return None
+
+    def _get_low_stock_list(self, db):
+        from models import Product
+        rows = db.query(Product).filter(
+            Product.is_active == True,
+            Product.stock_quantity <= Product.min_stock_threshold
+        ).all()
+        return [p.to_dict() for p in rows]
+
+    def _get_filtered_cargo(self, message, db):
+        from models import CargoShipment, CargoStatus
+        msg = message.lower()
+        if "yolda" in msg:
+            status = CargoStatus.IN_TRANSIT
+        elif "hazırlan" in msg:
+            status = CargoStatus.PREPARING
+        elif "teslim" in msg:
+            status = CargoStatus.DELIVERED
+        else:
+            return []
+        rows = db.query(CargoShipment).filter(
+            CargoShipment.status == status
+        ).all()
+        return [c.to_dict() for c in rows]
+
+    def build_smart_context(self, message, db):
+        intent, params = self.detect_intent_v2(message)
+        context = {"_intent_v2": intent, "_params_v2": params}
+
+        if intent == "delayed_cargo":
+            context["delayed_cargo_list"] = self._get_delayed_unified(db)
+        elif intent == "tracking_query":
+            cargo = self._find_cargo_by_tracking(params["tracking_number"], db)
+            if cargo:
+                context["cargo"] = cargo
+        elif intent == "customer_orders":
+            result = self._find_customer_orders(params["customer_name"], db)
+            if result:
+                context["customer_orders"] = result
+        elif intent == "stock_check_extra":
+            product = self._find_product_in_message(message, db)
+            if product:
+                context["product"] = product
+            else:
+                context["low_stock"] = self._get_low_stock_list(db)
+        elif intent == "today_summary_extra":
+            try:
+                from routers.analytics import dashboard_summary
+                context["summary"] = dashboard_summary(db=db)
+            except Exception:
+                pass
+        elif intent == "filtered_cargo":
+            context["cargo_list"] = self._get_filtered_cargo(message, db)
+
+        return context
+
+    def _format_smart_context(self, context):
+        intent = context.get("_intent_v2", "?")
+        lines = [f"Intent: {intent}"]
+
+        if "delayed_cargo_list" in context:
+            cargos = context["delayed_cargo_list"]
+            lines.append(f"Geciken kargolar ({len(cargos)} adet):")
+            for c in cargos:
+                lines.append(
+                    f"  - {c['tracking_number']} | {c.get('carrier','?')} | "
+                    f"durum: {c['status']} | sebep: {c.get('delay_reason','?')} | "
+                    f"konum: {c.get('last_location','?')} | sipariş: {c.get('order_number','?')}"
+                )
+
+        if "cargo" in context:
+            c = context["cargo"]
+            lines.append(
+                f"Kargo: {c['tracking_number']} | {c.get('carrier','?')} | "
+                f"{c['status']} | konum: {c.get('last_location','?')} | "
+                f"sipariş: {c.get('order_number','?')}"
+            )
+            if c.get("is_delayed"):
+                lines.append(f"  GECİKME: {c.get('delay_reason','?')}")
+
+        if "customer_orders" in context:
+            co = context["customer_orders"]
+            lines.append(f"Müşteri: {co['customer_name']} | Sipariş sayısı: {len(co['orders'])}")
+            for o in co["orders"]:
+                lines.append(
+                    f"  - {o['order_number']} | {o['status']} | "
+                    f"{o.get('total_amount', 0):.2f} TL"
+                )
+
+        if "product" in context:
+            p = context["product"]
+            threshold = p.get('min_stock_threshold', 10)
+            status = "KRİTİK" if p['stock_quantity'] <= threshold else "Normal"
+            lines.append(
+                f"Ürün: {p['name']} | Stok: {p['stock_quantity']} {p.get('unit','')} | "
+                f"Eşik: {threshold} | {status} | Fiyat: {p['price']:.2f} TL"
+            )
+
+        if "low_stock" in context:
+            lines.append(f"Kritik stoktaki ürünler ({len(context['low_stock'])} adet):")
+            for p in context["low_stock"]:
+                lines.append(
+                    f"  - {p['name']}: {p['stock_quantity']} {p.get('unit','')} "
+                    f"(eşik: {p.get('min_stock_threshold')})"
+                )
+
+        if "summary" in context:
+            s = context["summary"]
+            lines.append(
+                f"Günlük özet: bugünkü sipariş {s.get('today_orders',0)}, "
+                f"ciro {s.get('today_revenue',0):.2f} TL, "
+                f"bekleyen {s.get('pending_orders',0)}, "
+                f"düşük stok {s.get('low_stock_count',0)}, "
+                f"geciken kargo {s.get('delayed_cargo',0)}"
+            )
+
+        if "cargo_list" in context:
+            cargos = context["cargo_list"]
+            lines.append(f"Filtrelenmiş kargolar ({len(cargos)} adet):")
+            for c in cargos[:15]:
+                lines.append(
+                    f"  - {c['tracking_number']} | {c['status']} | "
+                    f"konum: {c.get('last_location','?')}"
+                )
+
+        return "\n".join(lines)
+
+    def smart_response(self, message, db):
+        context = self.build_smart_context(message, db)
+        intent = context.get("_intent_v2", "general")
+        context_text = self._format_smart_context(context)
+
+        if not self.is_gemini_active:
+            return {
+                "response": "⚠️ Gemini aktif değil. Bağlam:\n" + context_text,
+                "intent": intent,
+                "actions": [f"smart_{intent}_mock"],
+                "data": context,
+            }
+
+        prompt = f"""{self.SYSTEM_PROMPT}
+
+--- BAĞLAM VERİLERİ ---
+{context_text}
+
+--- KULLANICI MESAJI ---
+{message}
+
+Yukarıdaki bağlam verilerini kullanarak Türkçe, kısa ve net yanıt ver. Markdown kullan."""
+
+        try:
+            response = self._gemini_model.generate_content(
+                prompt,
+                generation_config={"max_output_tokens": 1024, "temperature": 0.7},
+            )
+            return {
+                "response": response.text,
+                "intent": intent,
+                "actions": [f"smart_{intent}"],
+                "data": context,
+            }
+        except Exception as e:
+            return {
+                "response": f"⚠️ Gemini hatası: {e}",
+                "intent": intent,
+                "actions": [f"smart_{intent}_error"],
+                "data": context,
+            }
+
 
 # Singleton instance
 ai_agent = AIAgent()
