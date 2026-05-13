@@ -709,18 +709,55 @@ Sormak istediğinizi yazmanız yeterli! 🚀""",
 
         return "\n".join(lines)
 
+    def _fetch_team_context(self, intent, params, db, message):
+        from models import Order, Product, CargoShipment
+        ctx = {}
+        if intent == "order_query":
+            num = params.get("order_number") or params.get("number")
+            if num:
+                order = db.query(Order).filter(Order.order_number.ilike(f"%{num}%")).first()
+                if order:
+                    ctx["order"] = order.to_dict()
+        elif intent == "stock_check":
+            products = db.query(Product).filter(Product.is_active == True).all()
+            ctx["products"] = [p.to_dict() for p in products]
+        elif intent == "cargo_track":
+            num = params.get("order_number") or params.get("number")
+            if num:
+                order = db.query(Order).filter(Order.order_number.ilike(f"%{num}%")).first()
+                if order and order.cargo:
+                    ctx["cargo"] = order.cargo.to_dict()
+            else:
+                cargo = db.query(CargoShipment).order_by(CargoShipment.created_at.desc()).first()
+                if cargo:
+                    ctx["cargo"] = cargo.to_dict()
+        elif intent == "product_info":
+            product = self._find_product_in_message(message, db)
+            if product:
+                ctx["product"] = product
+        elif intent == "daily_summary":
+            try:
+                from routers.analytics import dashboard_summary
+                ctx["summary"] = dashboard_summary(db=db)
+            except Exception:
+                pass
+        elif intent == "inventory_alert":
+            try:
+                from services.inventory_service import inventory_service
+                ctx["alerts"] = inventory_service.get_active_alerts(db)
+            except Exception:
+                pass
+        return ctx
+
     def smart_response(self, message, db):
+        if not self.is_gemini_active:
+            intent, params = self.detect_intent(message)
+            db_context = self._fetch_team_context(intent, params, db, message)
+            return self._mock_response(message, intent, params, db_context)
+
         context = self.build_smart_context(message, db)
         intent = context.get("_intent_v2", "general")
         context_text = self._format_smart_context(context)
-
-        if not self.is_gemini_active:
-            return {
-                "response": "⚠️ Gemini aktif değil. Bağlam:\n" + context_text,
-                "intent": intent,
-                "actions": [f"smart_{intent}_mock"],
-                "data": context,
-            }
 
         prompt = f"""{self.SYSTEM_PROMPT}
 
