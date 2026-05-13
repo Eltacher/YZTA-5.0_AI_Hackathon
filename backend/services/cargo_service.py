@@ -82,5 +82,120 @@ class CargoService:
         ).order_by(CargoShipment.estimated_delivery.asc()).all()
         return [s.to_dict() for s in shipments]
 
+    # ── EK: AI ile proaktif gecikme zenginlestirme ──
+    def enrich_delay_reasons_with_ai(self, db: Session) -> dict:
+        from services.ai_agent import ai_agent
+        now = datetime.utcnow()
+        cargos = db.query(CargoShipment).filter(
+            (CargoShipment.is_delayed == True)
+            | (CargoShipment.status == CargoStatus.DELAYED)
+            | (
+                (CargoShipment.estimated_delivery < now)
+                & CargoShipment.status.notin_([CargoStatus.DELIVERED, CargoStatus.RETURNED])
+            )
+        ).all()
+
+        enriched = 0
+        notifs_added = 0
+        notifs_updated = 0
+        generic = {"Tahmini teslim tarihi aşıldı", "", None}
+
+        for c in cargos:
+            if c.delay_reason in generic and ai_agent.is_gemini_active:
+                try:
+                    prompt = (
+                        f"Bir KOBI e-ticaret kargo gecikmesi icin kisa (2 cumle), "
+                        f"profesyonel sebep + operator aksiyon onerisi yaz. Turkce.\n"
+                        f"Takip: {c.tracking_number} | Firma: {c.carrier} | "
+                        f"Son konum: {c.last_location or 'Bilinmiyor'} | "
+                        f"Tahmini teslim: {c.estimated_delivery} | Su an: {now}"
+                    )
+                    resp = ai_agent._gemini_model.generate_content(prompt)
+                    c.delay_reason = resp.text.strip()[:500]
+                    enriched += 1
+                except Exception:
+                    pass
+
+            existing = db.query(Notification).filter(
+                Notification.link.like(f"%{c.tracking_number}%")
+            ).first()
+            order_num = c.order.order_number if c.order else "?"
+            msg = c.delay_reason or "Gecikme tespit edildi"
+            full_msg = f"Sipariş #{order_num} — {msg}"
+
+            if existing:
+                if "kargosunda gecikme." in (existing.message or "") or len(existing.message or "") < 200:
+                    existing.title = f"🚨 Kargo Gecikmesi: {c.tracking_number}"
+                    existing.message = full_msg
+                    existing.is_read = False
+                    notifs_updated += 1
+            else:
+                notif = Notification(
+                    title=f"🚨 Kargo Gecikmesi: {c.tracking_number}",
+                    message=full_msg,
+                    type=AlertType.CARGO_DELAY,
+                    link=f"/cargo?tracking={c.tracking_number}",
+                )
+                db.add(notif)
+                notifs_added += 1
+
+        if enriched or notifs_added or notifs_updated:
+            db.commit()
+
+        return {
+            "delayed_cargo_count": len(cargos),
+            "enriched_with_ai": enriched,
+            "notifications_added": notifs_added,
+            "notifications_updated": notifs_updated,
+        }
+
+    def generate_customer_apology(self, db: Session, cargo_id: int) -> dict:
+        from services.ai_agent import ai_agent
+        cargo = db.query(CargoShipment).filter(CargoShipment.id == cargo_id).first()
+        if not cargo:
+            return {"error": "Kargo bulunamadı"}
+        if not ai_agent.is_gemini_active:
+            return {"error": "Gemini aktif değil"}
+
+        order = cargo.order
+        customer_name = order.customer.name if order and order.customer else "Değerli Müşterimiz"
+        order_num = order.order_number if order else "?"
+
+        prompt = (
+            f"KOBI e-ticaret isletmesi adina kargosu geciken musteriye profesyonel, "
+            f"samimi ozur mesaji yaz. Turkce, en fazla 4 cumle. Siparis no ve takibi "
+            f"belirt; kucuk bir jest sun.\n\n"
+            f"Musteri: {customer_name}\n"
+            f"Siparis: #{order_num}\n"
+            f"Takip: {cargo.tracking_number}\n"
+            f"Kargo: {cargo.carrier}\n"
+            f"Sebep: {cargo.delay_reason or 'Belirtilmemis'}"
+        )
+        try:
+            resp = ai_agent._gemini_model.generate_content(prompt)
+            return {
+                "cargo_id": cargo_id,
+                "tracking_number": cargo.tracking_number,
+                "customer_name": customer_name,
+                "apology_message": resp.text.strip(),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def run_full_ai_check(self, db: Session) -> dict:
+        std = self.check_delays(db)
+        enrich_result = self.enrich_delay_reasons_with_ai(db)
+        apologies = []
+        delayed = self.get_delayed_shipments(db)
+        for c in delayed[:5]:
+            res = self.generate_customer_apology(db, c["id"])
+            if "apology_message" in res:
+                apologies.append(res)
+        return {
+            "standard_check": {"new_delays": len(std)},
+            "ai_enrichment": enrich_result,
+            "customer_apologies": apologies,
+        }
+
 
 cargo_service = CargoService()
